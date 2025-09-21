@@ -15,22 +15,30 @@ def _setup_path():
 
 _setup_path()
 
-# ---- Imports ----
+# ---- browser manager ----
 from common.browser_manager import get_browser, get_stealth_page
-from scraper_types.twitter_scraper_meta import scrape_twitter_profiles_async
+
+# ---- scrapers ----
+from scraper_types.twitter_scraper_meta import scrape_twitter_profiles_async, _contacts
 from scraper_types.twitter_scraper_visible_text import scrape_twitter_visible_text_seq
+
+# ---- db + schema utils ----
 from common.db_utils import get_db, process_and_store, SCHEMA
 
-# ---- alias mapping ----
+
+# ---- alias mapping for schema ----
 TWITTER_ALIAS: Dict[str, list] = {
     "url": ["twitter_link", "url"],
+
     "profile.username": ["handle", "username"],
     "profile.full_name": ["name", "full_name"],
     "profile.bio": ["bio"],
+
     "contact.emails": ["emails"],
     "contact.phone_numbers": ["phones", "phone_numbers"],
     "contact.websites": ["external_links"],
 }
+
 
 def _merge_results(meta_results: List[Dict], visual_results: List[Dict]) -> List[Dict]:
     merged: Dict[str, Dict] = {}
@@ -43,7 +51,8 @@ def _merge_results(meta_results: List[Dict], visual_results: List[Dict]) -> List
         merged[join_key].update(item)
     return list(merged.values())
 
-# ---- main function ----
+
+# ---- main orchestrator ----
 async def main(
     urls: List[str],
     *,
@@ -53,7 +62,15 @@ async def main(
     alias: Optional[Dict[str, list]] = None,
     write_path: Optional[str] = None,
 ) -> List[Dict]:
-    print(f"--- Starting Twitter scrape for {len(urls)} URLs ---")
+    """
+    Orchestrates the Twitter scraping:
+      1. Launches one stealth browser with two pages
+      2. Runs meta & visible scrapers concurrently
+      3. Merges results
+      4. Enriches with contact extraction
+      5. Stores or returns data
+    """
+    print(f"--- Starting combined Twitter scrape for {len(urls)} URLs ---")
 
     async with async_playwright() as p:
         browser = await get_browser(p, headless=headless)
@@ -61,7 +78,6 @@ async def main(
             meta_page = await get_stealth_page(browser)
             visual_page = await get_stealth_page(browser)
 
-            # Run both scrapers
             meta_task = asyncio.create_task(
                 scrape_twitter_profiles_async(urls, page=meta_page)
             )
@@ -70,21 +86,26 @@ async def main(
             )
 
             meta_results, visual_results = await asyncio.gather(meta_task, visual_task)
-
-            # ✅ Per-URL status prints
-            print("\n--- Individual URL Status ---")
-            for idx, result in enumerate(meta_results, start=1):
-                url = result.get("twitter_link") or result.get("url")
-                status = "OK" if "error" not in result else f"ERROR: {result['error']}"
-                print(f"[INFO] {idx}/{len(meta_results)} → {url} → {status}")
-
         finally:
             if browser:
                 await browser.close()
 
+    # --- merge results ---
     print("\n--- Merging Twitter results ---")
     combined_results = _merge_results(meta_results, visual_results)
 
+    # --- enrichment: extract emails & phones from bios/tweets ---
+    print("\n--- Enriching with contact extraction ---")
+    for item in combined_results:
+        bio_text = item.get("bio", "")
+        tweet_text = item.get("main_tweet_text", "")
+        text_blob = " ".join([bio_text or "", tweet_text or ""])
+
+        contacts = _contacts(text_blob)
+        item["emails"] = list(set(item.get("emails", []) + contacts["emails"]))
+        item["phones"] = list(set(item.get("phones", []) + contacts["phones"]))
+
+    # --- optional DB / file write ---
     if schema is not None and db is not None:
         print("\n--- Filtering to schema + inserting into MongoDB ---")
         filtered = process_and_store(
@@ -100,22 +121,28 @@ async def main(
     return combined_results
 
 
+# ---- CLI runner ----
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the main Twitter scraper.")
-    parser.add_argument("--urls", type=str, default="twitter_urls.txt", help="Path to file containing Twitter URLs")
-    parser.add_argument("--output", type=str, default="twitter_output.json", help="Path to save output JSON")
-    parser.add_argument("--headful", action="store_true", help="Run browser in headful mode")
+    parser = argparse.ArgumentParser(description="Run the main combined Twitter scraper.")
+    parser.add_argument("urls", nargs="+", help="Twitter profile URLs to scrape")
+    parser.add_argument("--headless", action="store_true", help="Run browser in headless mode")
+    parser.add_argument("--output", type=str, help="Optional output JSON file path")
     args = parser.parse_args()
 
-    urls = []
-    with open(args.urls, "r", encoding="utf-8") as f:
-        urls = [line.strip() for line in f if line.strip()]
+    db = None
+    schema = SCHEMA
+    alias = TWITTER_ALIAS
 
     results = asyncio.run(
-        main(urls, headless=not args.headful, db=None, schema=None, alias=TWITTER_ALIAS, write_path=args.output)
+        main(
+            args.urls,
+            headless=args.headless,
+            db=db,
+            schema=schema,
+            alias=alias,
+            write_path=args.output,
+        )
     )
 
-    with open(args.output, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
-
-    print(f"\n--- Test Complete ---\nResults have been saved to '{args.output}'")
+    if not args.output:
+        print(json.dumps(results, indent=2))
