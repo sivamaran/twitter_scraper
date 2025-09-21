@@ -1,10 +1,8 @@
 # twitter_scraper.py
 
 import asyncio
-import json
-import argparse
-import sys
 from pathlib import Path
+import sys
 from typing import List, Dict, Optional
 from playwright.async_api import async_playwright
 
@@ -12,7 +10,6 @@ def _setup_path():
     project_root = Path(__file__).resolve().parent.parent
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
-
 _setup_path()
 
 # ---- browser manager ----
@@ -22,24 +19,20 @@ from common.browser_manager import get_browser, get_stealth_page
 from scraper_types.twitter_scraper_meta import scrape_twitter_profiles_async, _contacts
 from scraper_types.twitter_scraper_visible_text import scrape_twitter_visible_text_seq
 
-# ---- db + schema utils ----
-from common.db_utils import get_db, process_and_store, SCHEMA
-
-
-# ---- alias mapping for schema ----
+# ---- schema + alias ----
+from common.db_utils import SCHEMA
 TWITTER_ALIAS: Dict[str, list] = {
     "url": ["twitter_link", "url"],
-
     "profile.username": ["handle", "username"],
     "profile.full_name": ["name", "full_name"],
     "profile.bio": ["bio"],
-
     "contact.emails": ["emails"],
     "contact.phone_numbers": ["phones", "phone_numbers"],
     "contact.websites": ["external_links"],
 }
 
 
+# ---- merge raw scraper results ----
 def _merge_results(meta_results: List[Dict], visual_results: List[Dict]) -> List[Dict]:
     merged: Dict[str, Dict] = {}
     for item in meta_results + visual_results:
@@ -52,23 +45,43 @@ def _merge_results(meta_results: List[Dict], visual_results: List[Dict]) -> List
     return list(merged.values())
 
 
+# ---- map raw result to schema ----
+def _map_to_schema(raw: Dict, schema: Dict, alias: Dict[str, list]) -> Dict:
+    """Takes a raw scraper dict and reshapes it into the SCHEMA format using alias mapping."""
+    from copy import deepcopy
+
+    mapped = deepcopy(schema)
+
+    for schema_key, possible_keys in alias.items():
+        # walk schema path like "profile.username"
+        target = mapped
+        parts = schema_key.split(".")
+        for p in parts[:-1]:
+            target = target[p]
+
+        for key in possible_keys:
+            if key in raw and raw[key]:
+                target[parts[-1]] = raw[key]
+                break
+
+    return mapped
+
+
 # ---- main orchestrator ----
 async def main(
     urls: List[str],
     *,
     headless: bool = True,
-    db=None,
-    schema: Optional[Dict] = None,
     alias: Optional[Dict[str, list]] = None,
-    write_path: Optional[str] = None,
+    schema: Optional[Dict] = None,
 ) -> List[Dict]:
     """
-    Orchestrates the Twitter scraping:
-      1. Launches one stealth browser with two pages
-      2. Runs meta & visible scrapers concurrently
+    Orchestrates Twitter scraping:
+      1. Launches stealth browser
+      2. Runs meta & visible scrapers
       3. Merges results
-      4. Enriches with contact extraction
-      5. Stores or returns data
+      4. Enriches with contacts
+      5. Maps to schema format (always)
     """
     print(f"--- Starting combined Twitter scrape for {len(urls)} URLs ---")
 
@@ -94,7 +107,7 @@ async def main(
     print("\n--- Merging Twitter results ---")
     combined_results = _merge_results(meta_results, visual_results)
 
-    # --- enrichment: extract emails & phones from bios/tweets ---
+    # --- enrich with contacts ---
     print("\n--- Enriching with contact extraction ---")
     for item in combined_results:
         bio_text = item.get("bio", "")
@@ -105,44 +118,10 @@ async def main(
         item["emails"] = list(set(item.get("emails", []) + contacts["emails"]))
         item["phones"] = list(set(item.get("phones", []) + contacts["phones"]))
 
-    # --- optional DB / file write ---
-    if schema is not None and db is not None:
-        print("\n--- Filtering to schema + inserting into MongoDB ---")
-        filtered = process_and_store(
-            db=db,
-            data=combined_results,
-            platform="twitter",
-            schema_obj=schema,
-            alias=alias or {},
-            write_path=write_path,
-        )
-        return filtered
+    # --- map to schema ---
+    print("\n--- Mapping results into schema ---")
+    schema_obj = schema or SCHEMA
+    alias_map = alias or TWITTER_ALIAS
+    schema_results = [_map_to_schema(item, schema_obj, alias_map) for item in combined_results]
 
-    return combined_results
-
-
-# ---- CLI runner ----
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the main combined Twitter scraper.")
-    parser.add_argument("urls", nargs="+", help="Twitter profile URLs to scrape")
-    parser.add_argument("--headless", action="store_true", help="Run browser in headless mode")
-    parser.add_argument("--output", type=str, help="Optional output JSON file path")
-    args = parser.parse_args()
-
-    db = None
-    schema = SCHEMA
-    alias = TWITTER_ALIAS
-
-    results = asyncio.run(
-        main(
-            args.urls,
-            headless=args.headless,
-            db=db,
-            schema=schema,
-            alias=alias,
-            write_path=args.output,
-        )
-    )
-
-    if not args.output:
-        print(json.dumps(results, indent=2))
+    return schema_results

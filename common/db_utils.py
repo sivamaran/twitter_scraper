@@ -151,25 +151,108 @@ def process_and_store(
 # in common/db_utils.py
 
 SCHEMA = {
-    "url": None,
-    "platform": None,
-    "content_type": None,
-    "source": None,
-    "profile": {
-        "username": None,
-        "full_name": None,
-        "bio": None,
-        "job_title": None,
-        # You can add more profile-specific fields here
+  "url": "",
+  "platform": "twitter",
+  "content_type": "",
+  "source": "twitter-scraper",
+  "profile": {
+    "username": "",
+    "full_name": "",
+    "bio": "",
+    "location": "",
+    "job_title": "",
+    "employee_count": ""
+  },
+  "contact": {
+    "emails": [],
+    "phone_numbers": [],
+    "address": "",
+    "websites": [],
+    "social_media_handles": {
+      "instagram": "",
+      "twitter": "",
+      "facebook": "",
+      "linkedin": "",
+      "youtube": "",
+      "tiktok": "",
+      "other": []
     },
-    "contact": {
-        "emails": [],
-        "phone_numbers": [],
-        "websites": [],
-        "social_media_handles": {
-            "instagram": None,
-            "other": []
-        }
-    },
-    # You can add other top-level objects here
+    "bio_links": []
+  },
+  "content": {
+    "caption": "",
+    "upload_date": "",
+    "channel_name": "",
+    "author_name": ""
+  },
+  "metadata": {
+    "scraped_at": "",
+    "data_quality_score": ""
+  },
+  "industry": "",
+  "revenue": "",
+  "lead_category": "",
+  "lead_sub_category": "",
+  "company_name": "",
+  "company_type": "",
+  "decision_makers": "",
+  "bdr": "AKG",
+  "product_interests": "",
+  "timeline": "",
+  "interest_level": "",
+  "icp_identifier": ""
 }
+
+# common/db_utils.py
+
+import json
+from datetime import datetime
+from pymongo import MongoClient
+
+def save_to_mongo(json_list, db_name="leadgen", collection_name="map_leads"):
+    """
+    Save a list of schema-shaped JSON docs into MongoDB.
+    Defaults: db_name='leadgen', collection_name='map_leads'.
+    """
+    if not json_list:
+        print(f"⚠️ No data to save into {collection_name}")
+        return []
+
+    client = MongoClient("mongodb://localhost:27017/")
+    db = client[db_name]
+    collection = db[collection_name]
+
+    try:
+        collection.insert_many(json_list)
+        print(f"✅ Saved {len(json_list)} records into MongoDB: {db_name}.{collection_name}")
+    except Exception as e:
+        print(f"⚠️ Failed saving into MongoDB: {e}")
+
+    return json_list
+
+
+def save_to_json(json_list, file_path="output.json"):
+    """
+    Save a list of schema-shaped JSON docs into a local JSON file.
+    Includes a timestamp for when the file was written.
+    """
+    if not json_list:
+        print("⚠️ No data to save to JSON file")
+        return []
+
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "saved_at": datetime.utcnow().isoformat(),
+                    "records": json_list,
+                },
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
+        print(f"💾 Wrote {len(json_list)} records to {file_path}")
+    except Exception as e:
+        print(f"⚠️ Failed writing JSON file: {e}")
+
+    return json_list
