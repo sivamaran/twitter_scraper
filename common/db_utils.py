@@ -151,54 +151,25 @@ def process_and_store(
 # in common/db_utils.py
 
 SCHEMA = {
-    "url": "",
-    "platform": "map",
-    "content_type": "",
-    "source": "map-scraper",
+    "url": None,
+    "platform": None,
+    "content_type": None,
+    "source": None,
     "profile": {
-        "username": "",
-        "full_name": "",
-        "bio": "",
-        "location": "",
-        "job_title": "",
-        "employee_count": ""
+        "username": None,
+        "full_name": None,
+        "bio": None,
+        "job_title": None,
+        # You can add more profile-specific fields here
     },
     "contact": {
         "emails": [],
         "phone_numbers": [],
-        "address": "",
         "websites": [],
         "social_media_handles": {
-            "instagram": "",
-            "twitter": "",
-            "facebook": "",
-            "linkedin": "",
-            "youtube": "",
-            "tiktok": "",
+            "instagram": None,
             "other": []
-        },
-        "bio_links": []
+        }
     },
-    "content": {
-        "caption": "",
-        "upload_date": "",
-        "channel_name": "",
-        "author_name": ""
-    },
-    "metadata": {
-        "scraped_at": "",
-        "data_quality_score": ""
-    },
-    "industry": "",
-    "revenue": "",
-    "lead_category": "",
-    "lead_sub_category": "",
-    "company_name": "",
-    "company_type": "",
-    "decision_makers": "",
-    "bdr": "AKG",
-    "product_interests": "",
-    "timeline": "",
-    "interest_level": "",
-    "icp_identifier": ""
+    # You can add other top-level objects here
 }
